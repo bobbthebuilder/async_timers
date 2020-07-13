@@ -48,7 +48,7 @@ public:
     {
         auto return_of_callable = std::async(std::launch::async, [this, duration, f = std::forward<Function>(f), ...args = std::forward<Args>(args...)]
         {
-            clock(duration);
+            auto clock_future = std::async(std::launch::async, [this, &duration]{ clock(duration); });
             // wait for the clock to finish.
             {
                 std::unique_lock<std::mutex> lock(wait_cond_mutex);
@@ -57,6 +57,7 @@ public:
                     return is_elapsed;
                 });
             }
+            clock_future.wait();
             return std::invoke(f, args...);
         });
         return return_of_callable;
@@ -71,7 +72,7 @@ public:
             stop_flag = true;
             while (stop_flag)
             {
-                clock(duration);
+                auto clock_future = std::async(std::launch::async, [this, &duration]{ clock(duration); });
                 // wait for the clock to finish.
                 {
                     std::unique_lock<std::mutex> lock(wait_cond_mutex);
@@ -80,6 +81,7 @@ public:
                         return is_elapsed;
                     });
                 }
+                clock_future.wait();
                 last_return_of_callable = std::invoke(f, args...);
             }
             return last_return_of_callable;
