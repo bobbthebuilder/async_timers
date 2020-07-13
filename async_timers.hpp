@@ -1,5 +1,5 @@
-#ifndef CPP_TIMERS_H
-#define CPP_TIMERS_H
+#ifndef ASYNC_TIMERS_H
+#define ASYNC_TIMERS_H
 
 // MIT License
 //
@@ -33,14 +33,14 @@
 #include <type_traits>
 #include <condition_variable>
 
-class Cpp_Timers
+class async_timers
 {
 public:
-    Cpp_Timers() : is_elapsed(false) { }
-    Cpp_Timers(const Cpp_Timers&) = delete;
-    Cpp_Timers(Cpp_Timers&& timer) = delete;
-    Cpp_Timers& operator=(const Cpp_Timers&) = delete;
-    Cpp_Timers& operator=(Cpp_Timers&&) = delete;
+    async_timers() : is_running(true), is_elapsed(false) {}
+    async_timers(const async_timers&) = delete;
+    async_timers(async_timers&& timer) = delete;
+    async_timers& operator=(const async_timers&) = delete;
+    async_timers& operator=(async_timers&&) = delete;
 
     template <class Rep, class Period = std::ratio<1>, class Function, class... Args>
     std::future<std::result_of_t<Function&&(Args&&...)>>
@@ -48,8 +48,11 @@ public:
     {
         auto return_of_callable = std::async(std::launch::async, [this, duration, f = std::forward<Function>(f), ...args = std::forward<Args>(args...)]
         {
-            auto clock_future = std::async(std::launch::async, [this, &duration]{ clock(duration); });
-            // wait for the clock to finish.
+            is_running = true;
+            auto future_of_clock = std::async(std::launch::async, [this, &duration]
+            {
+                clock(duration);
+            });
             {
                 std::unique_lock<std::mutex> lock(wait_cond_mutex);
                 wait_cond.wait(lock, [this]
@@ -57,7 +60,7 @@ public:
                     return is_elapsed;
                 });
             }
-            clock_future.wait();
+            future_of_clock.wait();
             return std::invoke(f, args...);
         });
         return return_of_callable;
@@ -69,11 +72,13 @@ public:
         auto return_of_callable = std::async(std::launch::async, [this, duration, f = std::forward<Function>(f), ...args = std::forward<Args>(args...)]
         {
             std::result_of_t<Function&&(Args&&...)> last_return_of_callable;
-            stop_flag = true;
-            while (stop_flag)
+            is_running = true;
+            while (is_running)
             {
-                auto clock_future = std::async(std::launch::async, [this, &duration]{ clock(duration); });
-                // wait for the clock to finish.
+                auto future_of_clock = std::async(std::launch::async, [this, &duration]
+                {
+                    clock(duration);
+                });
                 {
                     std::unique_lock<std::mutex> lock(wait_cond_mutex);
                     wait_cond.wait(lock, [this]
@@ -81,16 +86,16 @@ public:
                         return is_elapsed;
                     });
                 }
-                clock_future.wait();
+                future_of_clock.wait();
                 last_return_of_callable = std::invoke(f, args...);
             }
             return last_return_of_callable;
         });
         return return_of_callable;
     }
-    void stop_periodic()
+    void stop()
     {
-        stop_flag = false;
+        is_running = false;
     }
 private:
     template <class Rep, class Period = std::ratio<1>>
@@ -98,16 +103,19 @@ private:
     {
         std::unique_lock<std::mutex> lock(wait_cond_mutex);
         auto now = std::chrono::system_clock::now();
-        wait_cond.wait_until(lock, now + duration);
+        wait_cond.wait_until(lock, now + duration, [this]
+        {
+            return is_running ? false : true;
+        });
         is_elapsed = true;
         lock.unlock();
         wait_cond.notify_one();
     }
 private:
-    std::atomic_bool stop_flag;
+    std::atomic_bool is_running;
     std::condition_variable wait_cond;
     std::mutex wait_cond_mutex;
     bool is_elapsed;
 };
 
-#endif /* CPP_TIMERS_H */
+#endif /* ASYNC_TIMERS_H */
