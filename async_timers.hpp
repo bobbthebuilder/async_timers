@@ -33,14 +33,17 @@
 #include <type_traits>
 #include <condition_variable>
 
-class async_timers
+namespace async_timers
+{
+
+class instance
 {
 public:
-    async_timers() : is_running(true), is_elapsed(false) {}
-    async_timers(const async_timers&) = delete;
-    async_timers(async_timers&& timer) = delete;
-    async_timers& operator=(const async_timers&) = delete;
-    async_timers& operator=(async_timers&&) = delete;
+    instance() noexcept : is_elapsed(false) {}
+    instance(const instance&) = delete;
+    instance(instance&& timer) = delete;
+    instance& operator=(const instance&) = delete;
+    instance& operator=(instance&&) = delete;
 
     template <class Rep, class Period = std::ratio<1>, class Function, class... Args>
     std::future<std::result_of_t<Function&&(Args&&...)>>
@@ -93,7 +96,7 @@ public:
         });
         return return_of_callable;
     }
-    void stop()
+    void stop() noexcept
     {
         is_running = false;
     }
@@ -117,5 +120,7 @@ private:
     std::mutex wait_cond_mutex;
     bool is_elapsed;
 };
+
+}
 
 #endif /* ASYNC_TIMERS_H */
