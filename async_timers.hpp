@@ -35,7 +35,6 @@
 
 namespace async_timers
 {
-
 class instance
 {
 public:
@@ -49,13 +48,10 @@ public:
     std::future<std::result_of_t<Function&&(Args&&...)>>
     start_one_shot(std::chrono::duration<Rep, Period> duration, Function&& f, Args&&... args)
     {
+        stopped = false;
         auto return_of_callable = std::async(std::launch::async, [this, duration, f = std::forward<Function>(f), ...args = std::forward<Args>(args...)]
         {
-            is_running = true;
-            auto future_of_clock = std::async(std::launch::async, [this, &duration]
-            {
-                clock(duration);
-            });
+            clock(duration);
             {
                 std::unique_lock<std::mutex> lock(wait_cond_mutex);
                 wait_cond.wait(lock, [this]
@@ -63,7 +59,10 @@ public:
                     return is_elapsed;
                 });
             }
-            future_of_clock.wait();
+            if (stopped)
+            {
+                return std::result_of_t<Function&&(Args&&...)>{};
+            }
             return std::invoke(f, args...);
         });
         return return_of_callable;
@@ -72,16 +71,13 @@ public:
     std::future<std::result_of_t<Function&&(Args&&...)>>
     start_periodic(std::chrono::duration<Rep, Period> duration, Function&& f, Args&&... args)
     {
+        stopped = false;
         auto return_of_callable = std::async(std::launch::async, [this, duration, f = std::forward<Function>(f), ...args = std::forward<Args>(args...)]
         {
             std::result_of_t<Function&&(Args&&...)> last_return_of_callable;
-            is_running = true;
-            while (is_running)
+            while (!stopped)
             {
-                auto future_of_clock = std::async(std::launch::async, [this, &duration]
-                {
-                    clock(duration);
-                });
+                clock(duration);
                 {
                     std::unique_lock<std::mutex> lock(wait_cond_mutex);
                     wait_cond.wait(lock, [this]
@@ -89,7 +85,6 @@ public:
                         return is_elapsed;
                     });
                 }
-                future_of_clock.wait();
                 last_return_of_callable = std::invoke(f, args...);
             }
             return last_return_of_callable;
@@ -98,7 +93,7 @@ public:
     }
     void stop() noexcept
     {
-        is_running = false;
+        stopped = true;
     }
 private:
     template <class Rep, class Period = std::ratio<1>>
@@ -108,14 +103,14 @@ private:
         auto now = std::chrono::system_clock::now();
         wait_cond.wait_until(lock, now + duration, [this]
         {
-            return is_running ? false : true;
+            return stopped ? true : false;
         });
         is_elapsed = true;
         lock.unlock();
         wait_cond.notify_one();
     }
 private:
-    std::atomic_bool is_running;
+    std::atomic_bool stopped;
     std::condition_variable wait_cond;
     std::mutex wait_cond_mutex;
     bool is_elapsed;
