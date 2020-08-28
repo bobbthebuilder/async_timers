@@ -35,7 +35,7 @@
 
 namespace async_timers
 {
-static constexpr auto DEBUG_MODE {false};
+static constexpr auto DEBUG_MODE {true};
 class instance
 {
 public:
@@ -49,13 +49,14 @@ public:
     std::future<std::result_of_t<Function&&(Args&&...)>>
     start(std::chrono::duration<Rep, Period> duration, Function&& f, Args&&... args)
     {
-        if (is_running)
+        static bool expected;
+        if (!is_running.compare_exchange_strong(expected = false, true))
         {
             if constexpr (DEBUG_MODE)
             {
                 std::cout << "timer is already running, will stop and restart.\n";
             }
-            stopped = true;
+            stopped.store(true);
             finished_waiting_for_stop = false;
             std::unique_lock<std::mutex> lock(running_cond_mutex);
             running_cond.wait(lock, [this]
@@ -66,8 +67,8 @@ public:
             {
                 std::cout << "about to (re)start timer.\n";
             }
+            is_running.store(true);
         }
-        is_running = true;
         finished_waiting_for_clock = false;
         return std::async(std::launch::async, [this, duration, f = std::forward<Function>(f), ...args = std::forward<Args>(args...)]
         {
@@ -76,7 +77,7 @@ public:
                 std::cout << "thread id this timer runs on= " << std::this_thread::get_id() << "\n";
             }
             std::result_of_t<Function&&(Args&&...)> last_return_of_callable;
-            while (is_running)
+            while (is_running.load())
             {
                 clock(duration);
                 {
@@ -86,7 +87,7 @@ public:
                         return finished_waiting_for_clock;
                     });
                 }
-                if (stopped)
+                if (stopped.load())
                 {
                     if constexpr (DEBUG_MODE)
                     {
@@ -95,7 +96,7 @@ public:
                     break;
                 }
                 last_return_of_callable = std::invoke(f, args...);
-                if (is_single_shot)
+                if (is_single_shot.load())
                 {
                     if constexpr (DEBUG_MODE)
                     {
@@ -105,24 +106,24 @@ public:
                 }
             }
             std::lock_guard<std::mutex> lk(running_cond_mutex);
-            stopped = false;
+            stopped.store(false);
             finished_waiting_for_stop = true;
             running_cond.notify_one();
-            is_running = false;
+            is_running.store(false);
             return last_return_of_callable;
         });
     }
     void stop() noexcept
     {
-        stopped = true;
+        stopped.store(true);
     }
     void set_single_shot()
     {
-        is_single_shot = true;
+        is_single_shot.store(true);
     }
     void set_periodic()
     {
-        is_single_shot = false;
+        is_single_shot.store(false);
     }
 private:
     template <class Rep, class Period = std::ratio<1>>
@@ -136,7 +137,7 @@ private:
         auto now = std::chrono::system_clock::now();
         wait_cond.wait_until(lock, now + duration, [this]
         {
-            return stopped ? true : false;
+            return stopped.load() ? true : false;
         });
         finished_waiting_for_clock = true;
         lock.unlock();
