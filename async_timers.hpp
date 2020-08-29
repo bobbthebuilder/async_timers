@@ -49,7 +49,7 @@ public:
     std::future<std::result_of_t<Function&&(Args&&...)>>
     start(std::chrono::duration<Rep, Period> duration, Function&& f, Args&&... args)
     {
-        static bool expected;
+        bool expected;
         if (!is_running.compare_exchange_strong(expected = false, true))
         {
             if constexpr (DEBUG_MODE)
@@ -95,7 +95,7 @@ public:
                     }
                     break;
                 }
-                last_return_of_callable = std::invoke(f, args...);
+                last_return_of_callable = std::invoke(f, std::forward<Args>(args)...);
                 if (is_single_shot.load())
                 {
                     if constexpr (DEBUG_MODE)
