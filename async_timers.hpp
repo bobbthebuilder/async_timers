@@ -39,7 +39,7 @@ static constexpr auto DEBUG_MODE {true};
 class instance
 {
 public:
-    instance() noexcept : is_running(false), stopped(false), is_single_shot(true) {}
+    instance() noexcept : is_running(false), is_single_shot(true) {}
     instance(const instance&) = delete;
     instance(instance&& timer) = delete;
     instance& operator=(const instance&) = delete;
@@ -56,7 +56,7 @@ public:
             {
                 std::cout << "timer is already running, will stop and restart.\n";
             }
-            stopped.store(true);
+            is_running.store(false);
             finished_waiting_for_stop = false;
             std::unique_lock<std::mutex> lock(running_cond_mutex);
             running_cond.wait(lock, [this]
@@ -87,7 +87,7 @@ public:
                         return finished_waiting_for_clock;
                     });
                 }
-                if (stopped.load())
+                if (!is_running.load())
                 {
                     if constexpr (DEBUG_MODE)
                     {
@@ -106,7 +106,6 @@ public:
                 }
             }
             std::lock_guard<std::mutex> lk(running_cond_mutex);
-            stopped.store(false);
             finished_waiting_for_stop = true;
             running_cond.notify_one();
             is_running.store(false);
@@ -115,7 +114,7 @@ public:
     }
     void stop() noexcept
     {
-        stopped.store(true);
+        is_running.store(false);
     }
     void set_single_shot()
     {
@@ -137,14 +136,14 @@ private:
         auto now = std::chrono::system_clock::now();
         wait_cond.wait_until(lock, now + duration, [this]
         {
-            return stopped.load() ? true : false;
+            return is_running.load() ? false : true;
         });
         finished_waiting_for_clock = true;
         lock.unlock();
         wait_cond.notify_one();
     }
 private:
-    std::atomic_bool is_running, stopped, is_single_shot;
+    std::atomic_bool is_running, is_single_shot;
     std::condition_variable wait_cond, running_cond;
     std::mutex wait_cond_mutex, running_cond_mutex;
     bool finished_waiting_for_clock, finished_waiting_for_stop;
